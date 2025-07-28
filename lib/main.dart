@@ -5,34 +5,14 @@ import 'dart:convert'; // 用於處理 JSON
 import 'dart:async'; // 用於 Timeout 處理
 import 'dart:io' show Platform; // 用於判斷平台
 
-/*
- * =================================================================================
- * 重要提醒：專案設定
- * =================================================================================
- *
- * 1. pubspec.yaml:
- * 請確保您已經在 pubspec.yaml 的 dependencies 區塊中加入了以下套件：
- * dependencies:
- * flutter:
- * sdk: flutter
- * geolocator: ^12.0.0  # (請使用最新版本)
- * http: ^1.2.1         # (請使用最新版本)
- *
- * 2. Android 設定 (android/app/src/main/AndroidManifest.xml):
- * 在 <manifest> 標籤內，加入網路和定位權限：
- * <uses-permission android:name="android.permission.INTERNET" />
- * <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
- * <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
- * 如果您的 API 使用 http 而非 https，需要在 <application> 標籤中加入：
- * android:usesCleartextTraffic="true"
- *
- * 3. iOS 設定 (ios/Runner/Info.plist):
- * 在 <dict> 標籤內，加入定位權限的使用說明：
- * <key>NSLocationWhenInUseUsageDescription</key>
- * <string>我們需要您的位置來為您提供簽到服務。</string>
- *
- * =================================================================================
- */
+// --- 第 1 步：建立地點資料模型 ---
+class LocationTarget {
+  final String name;
+  final double latitude;
+  final double longitude;
+
+  LocationTarget({required this.name, required this.latitude, required this.longitude});
+}
 
 void main() {
   runApp(const MyApp());
@@ -48,6 +28,10 @@ class MyApp extends StatelessWidget {
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
         useMaterial3: true,
+        appBarTheme: AppBarTheme(
+          backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+          foregroundColor: Colors.black87,
+        ),
         elevatedButtonTheme: ElevatedButtonThemeData(
           style: ElevatedButton.styleFrom(
             backgroundColor: Colors.deepPurple,
@@ -74,59 +58,59 @@ class UserHomePage extends StatefulWidget {
 }
 
 class _UserHomePageState extends State<UserHomePage> {
-  // 狀態變數
+  // --- 第 2 步：新增狀態變數和地點列表 ---
   Position? _currentPosition;
-  String _statusMessage = '請點擊按鈕開始簽到';
+  String _statusMessage = '請選擇地點後開始簽到';
   bool _isLoading = false;
+
+  // 預設的地點列表
+  final List<LocationTarget> _locations = [
+    LocationTarget(name: "台北101", latitude: 25.033964, longitude: 121.564468),
+    LocationTarget(name: "台北車站", latitude: 25.047924, longitude: 121.517082),
+    LocationTarget(name: "國立故宮博物院", latitude: 25.10259, longitude: 121.54857),
+    LocationTarget(name: "Google加州總部(測試用)", latitude: 37.42200, longitude: -122.08400),
+  ];
+  
+  // 用於儲存當前選中的地點
+  LocationTarget? _selectedLocation;
+
+  @override
+  void initState() {
+    super.initState();
+    // 預設選中列表中的第一個地點
+    if (_locations.isNotEmpty) {
+      _selectedLocation = _locations.first;
+    }
+  }
+
 
   // --- 邏輯函式 ---
 
-  /// 1. 獲取目前 GPS 位置
-  /// 如果成功，會更新 _currentPosition 並回傳 true。
-  /// 如果失敗（權限、服務關閉等），會更新 _statusMessage 並回傳 false。
   Future<bool> _getCurrentLocation() async {
-    // 檢查定位服務是否開啟
+    // ... (此函式保持不變)
     bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
-      if (mounted) {
-        setState(() => _statusMessage = '請開啟裝置的定位服務');
-      }
+      if (mounted) setState(() => _statusMessage = '請開啟裝置的定位服務');
       return false;
     }
-
-    // 檢查並請求定位權限
     LocationPermission permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
       if (permission == LocationPermission.denied) {
-        if (mounted) {
-          setState(() => _statusMessage = '您已拒絕定位權限，無法簽到');
-        }
+        if (mounted) setState(() => _statusMessage = '您已拒絕定位權限，無法簽到');
         return false;
       }
     }
-    
     if (permission == LocationPermission.deniedForever) {
-      if (mounted) {
-        setState(() => _statusMessage = '定位權限已被永久拒絕，請至系統設定中手動開啟');
-      }
-      // 可以考慮跳出一個對話框，引導使用者去設定
-      // await Geolocator.openAppSettings();
+      if (mounted) setState(() => _statusMessage = '定位權限已被永久拒絕，請至系統設定中手動開啟');
       return false;
     } 
-
-    // 獲取位置，並加入錯誤處理
     try {
-      // *** 更新部分：根據新版 geolocator，將設定整合至 LocationSettings ***
       final LocationSettings locationSettings = LocationSettings(
         accuracy: LocationAccuracy.high,
         timeLimit: const Duration(seconds: 10),
       );
-      
-      final position = await Geolocator.getCurrentPosition(
-        locationSettings: locationSettings,
-      );
-
+      final position = await Geolocator.getCurrentPosition(locationSettings: locationSettings);
       if (mounted) {
         setState(() {
           _currentPosition = position;
@@ -135,41 +119,40 @@ class _UserHomePageState extends State<UserHomePage> {
       }
       return true;
     } on TimeoutException {
-      if (mounted) {
-        setState(() => _statusMessage = '獲取位置超時，請檢查 GPS 訊號');
-      }
+      if (mounted) setState(() => _statusMessage = '獲取位置超時，請檢查 GPS 訊號');
       return false;
     } catch (e) {
-      if (mounted) {
-        setState(() => _statusMessage = '獲取位置失敗: $e');
-      }
+      if (mounted) setState(() => _statusMessage = '獲取位置失敗: $e');
       return false;
     }
   }
 
-  /// 2. 呼叫後端的 "arrive" API
+  /// --- 第 5 步：更新簽到邏輯 ---
   Future<void> _sendArrivalRequest() async {
     if (_currentPosition == null) {
-      if (mounted) {
-        setState(() => _statusMessage = '內部錯誤：位置為空，無法傳送請求');
-      }
+      if (mounted) setState(() => _statusMessage = '內部錯誤：使用者位置為空');
+      return;
+    }
+    if (_selectedLocation == null) {
+      if (mounted) setState(() => _statusMessage = '錯誤：尚未選擇簽到地點');
       return;
     }
 
-    // 後端 API 網址，請根據您的情況修改
-    // Android 模擬器連到本機，網址用 10.0.2.2
-    // iOS 模擬器連到本機，網址用 localhost 或 127.0.0.1
-    final String apiUrl = Platform.isAndroid 
-        ? 'http://10.0.2.2:8080/api/location/arrive/user123' 
-        : 'http://localhost:8080/api/location/arrive/user123'; // 暫時寫死 userId
-
+    final String apiUrl = Platform.isAndroid
+        ? 'http://10.0.2.2:8080/api/location/check-in'
+        : 'http://localhost:8080/api/location/check-in';
     try {
+      // 之後我們會把 userId 和 locationName 也傳給後端
       final response = await http.post(
         Uri.parse(apiUrl),
         headers: {'Content-Type': 'application/json; charset=UTF-8'},
         body: json.encode({
+          // 傳送使用者當前的位置
           'latitude': _currentPosition!.latitude,
           'longitude': _currentPosition!.longitude,
+          // 之後給新 API 用的額外資訊
+          'userId': 'user123', // 暫時寫死
+          'locationName': _selectedLocation!.name,
         }),
       ).timeout(const Duration(seconds: 15));
 
@@ -178,20 +161,21 @@ class _UserHomePageState extends State<UserHomePage> {
           final responseBody = json.decode(utf8.decode(response.bodyBytes));
           setState(() => _statusMessage = '簽到成功：${responseBody['message'] ?? '伺服器已處理'}');
         } else {
-          setState(() => _statusMessage = '簽到失敗：伺服器錯誤 ${response.statusCode}');
+          // 這裡我們直接顯示後端的錯誤訊息
+           final responseBody = json.decode(utf8.decode(response.bodyBytes));
+          setState(() => _statusMessage = '簽到失敗：${responseBody['message'] ?? '伺服器錯誤 ${response.statusCode}'}');
         }
       }
+    } on FormatException {
+       if (mounted) setState(() => _statusMessage = '簽到失敗：後端回傳格式錯誤，請檢查後端 API');
     } catch (e) {
-      if (mounted) {
-        setState(() => _statusMessage = '呼叫簽到 API 失敗: $e');
-      }
+      if (mounted) setState(() => _statusMessage = '呼叫簽到 API 失敗: $e');
     }
   }
 
-  /// 3. 簽到按鈕的整合處理函式
   void _handleCheckIn() async {
+    // ... (此函式前半段不變)
     if (_isLoading) return;
-
     if (mounted) {
       setState(() {
         _isLoading = true;
@@ -199,34 +183,74 @@ class _UserHomePageState extends State<UserHomePage> {
         _currentPosition = null;
       });
     }
-
     final bool gotLocation = await _getCurrentLocation();
     if (!gotLocation) {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
+      if (mounted) setState(() => _isLoading = false);
       return;
     }
 
-    if (mounted) {
-      setState(() => _statusMessage = '正在傳送簽到請求...');
-    }
+    // --- 第 5.1 步：更新後端判斷邏輯 ---
+    // 我們需要修改後端，讓它能接收目標地點的經緯度
+    // 在這裡，我們先在前端模擬判斷
+    final double targetLat = _selectedLocation!.latitude;
+    final double targetLon = _selectedLocation!.longitude;
     
-    await _sendArrivalRequest();
+    // 使用 geolocator 內建的距離計算
+    final distanceInMeters = Geolocator.distanceBetween(
+      _currentPosition!.latitude, 
+      _currentPosition!.longitude, 
+      targetLat, 
+      targetLon
+    );
 
-    if (mounted) {
-      setState(() => _isLoading = false);
+    if (distanceInMeters <= 5000) { // 假設範圍是 5 公里
+       if (mounted) setState(() => _statusMessage = '距離驗證通過！正在傳送簽到請求...');
+       await _sendArrivalRequest(); // 距離符合，才真的送出請求
+    } else {
+       if (mounted) setState(() => _statusMessage = '簽到失敗：您距離「${_selectedLocation!.name}」太遠了 (${(distanceInMeters/1000).toStringAsFixed(2)} 公里)');
     }
+
+    if (mounted) setState(() => _isLoading = false);
   }
 
   // --- UI 介面 ---
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
         title: Text(widget.title),
+        // --- 第 3 步：加入下拉式選單到 AppBar ---
+        actions: <Widget>[
+          // 確保地點列表不為空才顯示選單
+          if (_locations.isNotEmpty)
+            Container(
+              margin: const EdgeInsets.only(right: 10.0),
+              padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 4.0),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.9),
+                borderRadius: BorderRadius.circular(8.0),
+              ),
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<LocationTarget>(
+                  value: _selectedLocation,
+                  icon: const Icon(Icons.arrow_drop_down, color: Colors.deepPurple),
+                  onChanged: (LocationTarget? newValue) {
+                    // --- 第 4 步：管理選取狀態 ---
+                    setState(() {
+                      _selectedLocation = newValue;
+                      _statusMessage = '已選擇地點：${newValue?.name}';
+                    });
+                  },
+                  items: _locations.map<DropdownMenuItem<LocationTarget>>((LocationTarget location) {
+                    return DropdownMenuItem<LocationTarget>(
+                      value: location,
+                      child: Text(location.name, style: const TextStyle(color: Colors.black87)),
+                    );
+                  }).toList(),
+                ),
+              ),
+            ),
+        ],
       ),
       body: Center(
         child: Padding(
@@ -234,6 +258,16 @@ class _UserHomePageState extends State<UserHomePage> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: <Widget>[
+              // 新增一個卡片來顯示目標地點
+              _buildInfoCard(
+                icon: Icons.flag,
+                title: '目標簽到點',
+                content: _selectedLocation?.name ?? '尚未選擇地點',
+                subtitle: _selectedLocation != null 
+                  ? '緯度: ${_selectedLocation!.latitude}, 經度: ${_selectedLocation!.longitude}' 
+                  : '',
+              ),
+              const SizedBox(height: 16),
               _buildInfoCard(
                 icon: Icons.location_pin,
                 title: '您目前的位置',
@@ -241,15 +275,13 @@ class _UserHomePageState extends State<UserHomePage> {
                     ? '尚未取得位置'
                     : '緯度: ${_currentPosition!.latitude.toStringAsFixed(5)}\n經度: ${_currentPosition!.longitude.toStringAsFixed(5)}',
               ),
-              const SizedBox(height: 24),
-
+              const SizedBox(height: 16),
               _buildInfoCard(
                 icon: Icons.info_outline,
                 title: '處理狀態',
                 content: _statusMessage,
               ),
               const SizedBox(height: 48),
-
               _isLoading
                   ? const CircularProgressIndicator()
                   : ElevatedButton.icon(
@@ -264,7 +296,8 @@ class _UserHomePageState extends State<UserHomePage> {
     );
   }
 
-  Widget _buildInfoCard({required IconData icon, required String title, required String content}) {
+  // 抽取出一個建立資訊卡片的輔助函式，讓 UI 更清晰
+  Widget _buildInfoCard({required IconData icon, required String title, required String content, String? subtitle}) {
     return Card(
       elevation: 4,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -283,9 +316,18 @@ class _UserHomePageState extends State<UserHomePage> {
             const Divider(height: 20, thickness: 1),
             Text(
               content,
-              style: TextStyle(fontSize: 16, color: Colors.grey[700], height: 1.5),
+              style: TextStyle(fontSize: 16, color: Colors.grey[800], height: 1.5),
               textAlign: TextAlign.center,
             ),
+            if (subtitle != null && subtitle.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 8.0),
+                child: Text(
+                  subtitle,
+                  style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                  textAlign: TextAlign.center,
+                ),
+              ),
           ],
         ),
       ),
