@@ -5,6 +5,9 @@ import 'dart:convert';
 import 'dart:async';
 import 'dart:io' show Platform;
 
+// 【第 1 步：匯入設定檔】
+import 'config.dart'; 
+
 // --- 資料模型 ---
 class LocationTarget {
   final String name;
@@ -13,7 +16,6 @@ class LocationTarget {
 
   LocationTarget({required this.name, required this.latitude, required this.longitude});
 
-  // 【新功能】增加一個工廠建構子，方便從後端回傳的 JSON 建立物件
   factory LocationTarget.fromJson(Map<String, dynamic> json) {
     return LocationTarget(
       name: json['name'],
@@ -53,13 +55,148 @@ class MyApp extends StatelessWidget {
           ),
         ),
       ),
-      home: const UserHomePage(title: '使用者定位簽到'),
+      home: const LoginPage(),
     );
   }
 }
 
+// ====================================================================
+// 登入頁面 Widget
+// ====================================================================
+class LoginPage extends StatefulWidget {
+  const LoginPage({super.key});
+
+  @override
+  State<LoginPage> createState() => _LoginPageState();
+}
+
+class _LoginPageState extends State<LoginPage> {
+  final _usernameController = TextEditingController(text: 'it007');
+  final _passwordController = TextEditingController();
+  String _errorMessage = '';
+  bool _isLoading = false;
+
+  Future<void> _login() async {
+    if (_usernameController.text.isEmpty || _passwordController.text.isEmpty) {
+      setState(() => _errorMessage = '帳號和密碼不能為空');
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+      _errorMessage = '';
+    });
+
+    final String username = _usernameController.text;
+    final String password = _passwordController.text;
+    
+    // 【第 2 步：移除舊的 IP 判斷邏輯】
+    // final String apiBaseUrl = Platform.isAndroid ? 'http://10.0.2.2:8080' : 'http://localhost:8080'; // <- 已刪除
+
+    final String basicAuthHeader = 'Basic ${base64Encode(utf8.encode('$username:$password'))}';
+
+    try {
+      // 【第 3 步：使用從 config.dart 匯入的 apiBaseUrl】
+      final response = await http.get(
+        Uri.parse('$apiBaseUrl/api/location/all-targets'),
+        headers: {'Authorization': basicAuthHeader},
+      ).timeout(const Duration(seconds: 10));
+
+      if (mounted) {
+        if (response.statusCode == 200) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (context) => UserHomePage(
+                title: '使用者定位簽到',
+                username: username,
+                password: password,
+              ),
+            ),
+          );
+        } else if (response.statusCode == 401) {
+          setState(() => _errorMessage = '登入失敗：帳號或密碼錯誤');
+        } else {
+          setState(() => _errorMessage = '登入失敗：伺服器錯誤 ${response.statusCode}');
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _errorMessage = '登入失敗：無法連線至伺服器');
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('登入')),
+      body: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(32.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text('簽到系統', style: Theme.of(context).textTheme.headlineMedium),
+              const SizedBox(height: 40),
+              TextField(
+                controller: _usernameController,
+                decoration: const InputDecoration(
+                  labelText: '帳號',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.person),
+                ),
+                keyboardType: TextInputType.text,
+              ),
+              const SizedBox(height: 20),
+              TextField(
+                controller: _passwordController,
+                decoration: const InputDecoration(
+                  labelText: '密碼',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.lock),
+                ),
+                obscureText: true,
+              ),
+              const SizedBox(height: 20),
+              if (_errorMessage.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 20.0),
+                  child: Text(_errorMessage, style: const TextStyle(color: Colors.red)),
+                ),
+              _isLoading
+                  ? const CircularProgressIndicator()
+                  : ElevatedButton(
+                      onPressed: _login,
+                      child: const Text('登入'),
+                    ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+
+// ====================================================================
+// 簽到主頁 Widget (UserHomePage)
+// ====================================================================
 class UserHomePage extends StatefulWidget {
-  const UserHomePage({super.key, required this.title});
+  final String username;
+  final String password;
+
+  const UserHomePage({
+    super.key, 
+    required this.title,
+    required this.username,
+    required this.password,
+  });
+  
   final String title;
 
   @override
@@ -67,42 +204,32 @@ class UserHomePage extends StatefulWidget {
 }
 
 class _UserHomePageState extends State<UserHomePage> {
-  // --- 狀態變數 ---
   Position? _currentPosition;
   String _statusMessage = '正在從伺服器獲取地點列表...';
   bool _isLoading = false;
-  bool _isFetchingLocations = true; // 新增一個狀態來追蹤是否正在獲取地點
+  bool _isFetchingLocations = true;
 
-  // 地點列表現在是空的，將由 API 填充
   List<LocationTarget> _locations = [];
   LocationTarget? _selectedLocation;
 
-  // 【新功能】API 相關設定
-  final String _apiBaseUrl = Platform.isAndroid ? 'http://10.0.2.2:8080' : 'http://localhost:8080';
+  // 【第 2 步：移除舊的 IP 判斷邏輯】
+  // final String _apiBaseUrl = Platform.isAndroid ? 'http://10.0.2.2:8080' : 'http://localhost:8080'; // <- 已刪除
   
-  // 在真實應用中，帳號密碼應該來自登入頁面
-  final String _username = 'it007';
-  final String _password = '!QAZ2wsx#EDC'; // 請替換為您資料庫中的正確密碼
-
-  // 產生 Basic Auth 的 Header
   String get _basicAuthHeader {
-    return 'Basic ${base64Encode(utf8.encode('$_username:$_password'))}';
+    return 'Basic ${base64Encode(utf8.encode('${widget.username}:${widget.password}'))}';
   }
 
   @override
   void initState() {
     super.initState();
-    // App 啟動時，自動去獲取地點列表
     _fetchLocationTargets();
   }
 
-  // --- 邏輯函式 ---
-
-  /// 【新功能】從後端 API 獲取所有可用的簽到地點
   Future<void> _fetchLocationTargets() async {
     try {
+      // 【第 3 步：使用從 config.dart 匯入的 apiBaseUrl】
       final response = await http.get(
-        Uri.parse('$_apiBaseUrl/api/location/all-targets'),
+        Uri.parse('$apiBaseUrl/api/location/all-targets'),
         headers: {'Authorization': _basicAuthHeader},
       ).timeout(const Duration(seconds: 10));
 
@@ -123,18 +250,13 @@ class _UserHomePageState extends State<UserHomePage> {
         }
       }
     } catch (e) {
-      if (mounted) {
-        setState(() => _statusMessage = '獲取地點失敗：無法連線至伺服器');
-      }
+      if (mounted) setState(() => _statusMessage = '獲取地點失敗：無法連線至伺服器');
     } finally {
-      if (mounted) {
-        setState(() => _isFetchingLocations = false);
-      }
+      if (mounted) setState(() => _isFetchingLocations = false);
     }
   }
 
   Future<bool> _getCurrentLocation() async {
-    // ... (此函式保持不變)
     bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
       if (mounted) setState(() => _statusMessage = '請開啟裝置的定位服務');
@@ -169,14 +291,13 @@ class _UserHomePageState extends State<UserHomePage> {
     }
   }
 
-  /// 【修改】更新簽到 API 的呼叫
   Future<void> _sendArrivalRequest() async {
     if (_currentPosition == null || _selectedLocation == null) {
       if (mounted) setState(() => _statusMessage = '錯誤：缺少位置或目標地點');
       return;
     }
-
-    final String apiUrl = '$_apiBaseUrl/api/location/check-in';
+    // 【第 3 步：使用從 config.dart 匯入的 apiBaseUrl】
+    final String apiUrl = '$apiBaseUrl/api/location/check-in';
 
     try {
       final response = await http.post(
@@ -186,7 +307,7 @@ class _UserHomePageState extends State<UserHomePage> {
           'Authorization': _basicAuthHeader,
         },
         body: json.encode({
-          'userId': _username,
+          'userId': widget.username,
           'locationName': _selectedLocation!.name,
           'latitude': _currentPosition!.latitude,
           'longitude': _currentPosition!.longitude,
@@ -194,7 +315,6 @@ class _UserHomePageState extends State<UserHomePage> {
       ).timeout(const Duration(seconds: 15));
 
       if (mounted) {
-        // 不論成功 (200) 或失敗 (400)，都嘗試解析後端回傳的訊息
         final responseBody = json.decode(utf8.decode(response.bodyBytes));
         final message = responseBody['message'] ?? '伺服器未提供訊息';
 
@@ -209,10 +329,8 @@ class _UserHomePageState extends State<UserHomePage> {
     }
   }
 
-  /// 【修改】簡化簽到流程，移除前端驗證
   void _handleCheckIn() async {
     if (_isLoading) return;
-
     if (mounted) {
       setState(() {
         _isLoading = true;
@@ -220,28 +338,21 @@ class _UserHomePageState extends State<UserHomePage> {
         _currentPosition = null;
       });
     }
-
-    // 步驟 1: 獲取位置
     final bool gotLocation = await _getCurrentLocation();
     if (!gotLocation) {
       if (mounted) setState(() => _isLoading = false);
       return;
     }
-
-    // 步驟 2: 直接傳送請求給後端，由後端判斷
     await _sendArrivalRequest();
-
     if (mounted) setState(() => _isLoading = false);
   }
 
-  // --- UI 介面 ---
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.title),
         actions: <Widget>[
-          // 【修改】根據地點獲取狀態來顯示不同元件
           _isFetchingLocations
               ? const Padding(
                   padding: EdgeInsets.only(right: 20.0),
