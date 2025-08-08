@@ -3,7 +3,6 @@ import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:async';
-import 'dart:io' show Platform;
 
 // 【第 1 步：匯入設定檔】
 import 'config.dart'; 
